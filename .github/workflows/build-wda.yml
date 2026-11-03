@@ -1,1 +1,63 @@
+name: Build WebDriverAgent IPA
 
+# 用 GitHub 的 macOS 云机器编译 WebDriverAgent，产出可侧载的 .ipa
+# 手动触发：Actions 页面 -> Build WebDriverAgent IPA -> Run workflow
+# 跑完在页面底部 Artifacts 里下载 WebDriverAgent-ipa.zip
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 需要 Xcode 26（与 iOS 26 匹配）。
+    # 如果报 "no matching runner"，把下面改成 macos-latest 再跑一次。
+    runs-on: macos-26
+
+    steps:
+      - name: 打印环境
+        run: |
+          sw_vers
+          xcodebuild -version
+          echo "----- iOS SDK -----"
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: 拉取 WebDriverAgent 源码
+        uses: actions/checkout@v4
+        with:
+          repository: appium/WebDriverAgent
+          path: wda
+
+      - name: 编译 (build-for-testing)
+        run: |
+          cd wda
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project WebDriverAgent.xcodeproj \
+            -scheme WebDriverAgentRunner \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            | tail -n 80
+
+      - name: 打包成 .ipa
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Debug-iphoneos/WebDriverAgentRunner-Runner.app"
+          echo "检查产物: $APP"
+          ls -la "$(dirname "$APP")"
+          test -d "$APP" || { echo "::error::没有找到 WebDriverAgentRunner-Runner.app"; exit 1; }
+
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qr WebDriverAgent.ipa Payload
+          ls -lh WebDriverAgent.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebDriverAgent-ipa
+          path: ${{ runner.temp }}/WebDriverAgent.ipa
+          retention-days: 30
